@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
 const fs = require('fs');
+const path = require('path');
+const { getUpdateInterval } = require('../config');
 
 let exchangeRates = {
     USDTOJPY: null,
@@ -9,18 +11,11 @@ let exchangeRates = {
 };
 
 function getSettings() {
-    return JSON.parse(fs.readFileSync('settings.json', 'utf8'));
-}
-
-function getUpdateInterval(frequency) {
-    switch(frequency) {
-        case 'hourly': return 60 * 60 * 1000;
-        case '30min': return 30 * 60 * 1000;
-        case '15min': return 15 * 60 * 1000;
-        case '5min': return 5 * 60 * 1000;
-        case '1min': return 60 * 1000;  // New 1-minute option
-        default: return 60 * 60 * 1000; // default to hourly
+    const settings = JSON.parse(fs.readFileSync('settings.json', 'utf8'));
+    if (typeof settings.showJpyToUsd === 'undefined') {
+        settings.showJpyToUsd = true; // Default to showing JPY to USD
     }
+    return settings;
 }
 
 async function updateExchangeRates() {
@@ -37,38 +32,56 @@ async function updateExchangeRates() {
 }
 
 function sendRateUpdate(client) {
-    const settings = getSettings();
-    const channelId = settings.registeredChannelId;
-   
-    if (!channelId) {
-        console.log('No channel registered for updates.');
+    const channelIdsPath = path.join(__dirname, '..', 'channelIds.txt');
+    
+    if (!fs.existsSync(channelIdsPath)) {
+        console.log('No channels registered for updates.');
         return;
     }
-   
-    const channel = client.channels.cache.get(channelId);
-    if (!channel) {
-        console.log('Registered channel not found.');
+
+    const channelIds = fs.readFileSync(channelIdsPath, 'utf8').split('\n').filter(id => id.trim() !== '');
+
+    if (channelIds.length === 0) {
+        console.log('No channels registered for updates.');
         return;
     }
-   
+
     const embed = createRateEmbed();
-    channel.send({ embeds: [embed] });
+
+    channelIds.forEach(channelId => {
+        const channel = client.channels.cache.get(channelId);
+        if (channel) {
+            channel.send({ embeds: [embed] });
+        } else {
+            console.log(`Channel not found: ${channelId}`);
+        }
+    });
 }
 
 function createRateEmbed() {
+    const settings = getSettings();
     const usdToJpy = exchangeRates.USDTOJPY.toFixed(2);
     const jpyToUsd = exchangeRates.JPYTOUSD.toFixed(6);
     const lastUpdated = exchangeRates.lastUpdated.toLocaleString();
 
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setColor(0x0099FF)
-        .setTitle('Current Exchange Rates')
+        .setTitle('📊 Current Exchange Rates')
+        .setDescription('Current state of USD/JPY exchange rates')
         .addFields(
-            { name: 'USD to JPY', value: `$1.00 USD = ¥${usdToJpy} JPY`, inline: true },
-            { name: 'JPY to USD', value: `¥1 JPY = $${jpyToUsd} USD`, inline: true },
+            { name: '🇺🇸 USD to JPY 🇯🇵', value: `$1.00 USD = ¥${usdToJpy} JPY`, inline: false }
         )
         .setFooter({ text: `Last updated: ${lastUpdated}` })
-        .setTimestamp();
+        .setTimestamp()
+        .setThumbnail('https://example.com/currency-icon.png');
+
+    if (settings.showJpyToUsd) {
+        embed.addFields(
+            { name: '🇯🇵 JPY to USD 🇺🇸', value: `¥1 JPY = $${jpyToUsd} USD`, inline: false }
+        );
+    }
+
+    return embed;
 }
 
 module.exports = {
@@ -88,15 +101,42 @@ module.exports = {
     scheduleNextUpdate(client) {
         const settings = getSettings();
         const interval = getUpdateInterval(settings.postFrequency);
-        setTimeout(() => {
+    
+        // Clear existing timeout
+        if (this.updateTimeout) {
+            clearTimeout(this.updateTimeout);
+        }
+    
+        // Calculate time until next aligned interval
+        const now = new Date();
+        const delay = interval - (now.getTime() % interval);
+    
+        this.updateTimeout = setTimeout(() => {
             this.sendRateUpdate(client);
             this.scheduleNextUpdate(client);
-        }, interval);
+        }, delay);
     },
     initializeRates() {
         const settings = getSettings();
         const apiInterval = getUpdateInterval(settings.apiUpdateFrequency);
+    
+        // Clear existing interval
+        if (this.updateInterval) {
+            clearInterval(this.updateInterval);
+        }
+    
+        // Perform initial update
         this.updateExchangeRates();
-        setInterval(this.updateExchangeRates, apiInterval);
+    
+        // Calculate time until next aligned interval
+        const now = new Date();
+        const delay = apiInterval - (now.getTime() % apiInterval);
+    
+        // Set timeout for first aligned update
+        setTimeout(() => {
+            this.updateExchangeRates();
+            // Then set interval for subsequent updates
+            this.updateInterval = setInterval(this.updateExchangeRates, apiInterval);
+        }, delay);
     }
 };

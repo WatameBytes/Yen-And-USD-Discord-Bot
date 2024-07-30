@@ -4,7 +4,7 @@ const { exec } = require('child_process');
 const envFile = '.env';
 
 function createEnvFile() {
-  const envContent = `DISCORD_TOKEN="TOKEN_TOKEN"\nCLIENT_ID="CLIENT_ID"`;
+  const envContent = `DISCORD_TOKEN="PLACE_TOKEN_HERE"\nCLIENT_ID="CLIENT_ID"`;
   fs.writeFileSync(envFile, envContent);
   console.log('.env file created successfully. Please update your DISCORD_TOKEN and CLIENT_ID in the .env file.');
 }
